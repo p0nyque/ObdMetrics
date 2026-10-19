@@ -91,6 +91,8 @@ final class ExecutionContext {
 				});
 			}
 		} else {
+			final boolean clearExtendedAddressing = commandProducer.isExtendedAddressingInUse()
+					|| modules.stream().anyMatch(Init.Header::isExtendedAddressing);
 			for (int i = 0; i < modules.size(); i++) {
 				final Init.Header module = modules.get(i);
 				// module.getMode() is used here as a CAN module label (eg. "ABS"), not a protocol mode.
@@ -99,7 +101,7 @@ final class ExecutionContext {
 						DtcProgress.module(module.getMode(), i + 1, modules.size())));
 
 				if (module.getHeader() != null && module.getHeader().length() > 0) {
-					commandsBuffer.addLast(new ATCommand("SH" + module.getHeader()));
+					module.commands(clearExtendedAddressing).forEach(commandsBuffer::addLast);
 				}
 
 				// The caller says which requests the module takes; the header alone does not tell.
@@ -141,11 +143,9 @@ final class ExecutionContext {
 				.filter(VinPids::isVin)
 				.collect(Collectors.toList())).forEach(p -> {
 					final ObdCommand command = new ObdCommand(p);
-					final ATCommand header = commandProducer.headerFor(command);
-					log.info("[DTC] Adding VIN read command {}, header: {}", p, header == null ? null : header.getQuery());
-					if (header != null) {
-						commandsBuffer.addLast(header);
-					}
+					final List<ATCommand> header = commandProducer.headerFor(command);
+					log.info("[DTC] Adding VIN read command {}, header: {}", p, header);
+					header.forEach(commandsBuffer::addLast);
 					commandsBuffer.addLast(command);
 				});
 	}
@@ -160,6 +160,9 @@ final class ExecutionContext {
 		log.info("[Discovery] Probing header {}", header);
 		commandProducer.pause();
 		commandsBuffer.clear();
+		if (commandProducer.isExtendedAddressingInUse()) {
+			Init.CLEAR_EXTENDED_ADDRESSING.forEach(commandsBuffer::addLast);
+		}
 		commandsBuffer.addLast(new ATCommand("SH" + header));
 		commandsBuffer.addLast(new ModuleDiscoveryCommand(header));
 		commandProducer.resetHeader();
@@ -178,7 +181,7 @@ final class ExecutionContext {
 		}
 
 		init.getHeaders().stream().filter(w -> w.getMode().equals(pid.deductMode())).findFirst()
-				.ifPresent(id -> commandsBuffer.addLast(new ATCommand("SH" + id.getHeader())));
+				.ifPresent(id -> id.commands(init.hasExtendedAddressing()).forEach(commandsBuffer::addLast));
 
 		commandsBuffer.addLast(UDSConstants.UDS_EXTENDED_SESSION);
 		commandsBuffer.addLast(UDSConstants.UDS_TESTER_AVAILIBILITY);

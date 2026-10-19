@@ -1,0 +1,16 @@
+{
+  "livedata": [
+    {
+      "priority": 0,
+      "id": "99001",
+      "mode": "22",
+      "pid": "4205",
+      "length": 2,
+      "description": "BMW DDE test value",
+      "min": 0,
+      "max": 1000,
+      "units": "",
+      "formula": "((A*256)+B)/100"
+    }
+  ]
+}

@@ -16,10 +16,14 @@
  */
 package org.obd.metrics.api.model;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 import org.obd.metrics.api.CANNetworkRegistry;
 import org.obd.metrics.api.DefaultCanNetworkRegistry;
+import org.obd.metrics.command.ATCommand;
 import org.obd.metrics.command.group.CommandGroup;
 import org.obd.metrics.command.group.DefaultCommandGroup;
 
@@ -52,7 +56,58 @@ public class Init {
 		@Getter
 		@Default
 		private DtcProtocol dtcProtocol = DtcProtocol.UDS;
+
+		/**
+		 * CAN extended address of the target module (ISO 15765-2 extended addressing), e.g. {@code 12} for the
+		 * BMW DDE: the module's address travels as the first data byte, the CAN id ({@link #header}, {@code 6F1}
+		 * on BMW) addresses the gateway. Empty for normal addressing.
+		 */
+		@Getter
+		@Default
+		private String extendedAddress = "";
+
+		/**
+		 * CAN id the module answers on ({@code ATCRA}), e.g. {@code 612} for the BMW DDE. Only used with
+		 * {@link #extendedAddress}; empty leaves the adapter's receive filter at its default.
+		 */
+		@Getter
+		@Default
+		private String receiveAddress = "";
+
+		public boolean isExtendedAddressing() {
+			return extendedAddress != null && !extendedAddress.isEmpty();
+		}
+
+		/**
+		 * The AT commands that point the adapter at this module. With an extended address: {@code ATSH}, the
+		 * extended address, the receive filter and a flow control frame that carries the extended address too
+		 * (multi-frame replies need it). {@code clearExtendedAddressing} first turns all of that off again, for a
+		 * normal header sent while the adapter may still be set up for an extended one.
+		 */
+		public List<ATCommand> commands(final boolean clearExtendedAddressing) {
+			final List<ATCommand> commands = new ArrayList<>();
+			if (isExtendedAddressing()) {
+				commands.add(new ATCommand("SH" + header));
+				commands.add(new ATCommand("CEA" + extendedAddress));
+				if (receiveAddress != null && !receiveAddress.isEmpty()) {
+					commands.add(new ATCommand("CRA" + receiveAddress));
+				}
+				commands.add(new ATCommand("FCSH" + header));
+				commands.add(new ATCommand("FCSD" + extendedAddress + "300000"));
+				commands.add(new ATCommand("FCSM1"));
+			} else {
+				if (clearExtendedAddressing) {
+					commands.addAll(CLEAR_EXTENDED_ADDRESSING);
+				}
+				commands.add(new ATCommand("SH" + header));
+			}
+			return commands;
+		}
 	}
+
+	/** Turns extended addressing, the receive filter and the custom flow control off (ELM327 defaults). */
+	public static final List<ATCommand> CLEAR_EXTENDED_ADDRESSING = Collections.unmodifiableList(
+			Arrays.asList(new ATCommand("CEA"), new ATCommand("CRA"), new ATCommand("FCSM0")));
 
 	public enum DtcProtocol {
 		UDS, OBD
@@ -96,6 +151,11 @@ public class Init {
 	@Singular
 	private List<Header> headers;
 	
+	/** True when any header of the table uses CAN extended addressing (see {@link Header#getExtendedAddress()}). */
+	public boolean hasExtendedAddressing() {
+		return headers != null && headers.stream().anyMatch(Header::isExtendedAddressing);
+	}
+
 	@Getter
 	@Builder.Default
 	private CANNetworkRegistry networkRegistry = new DefaultCanNetworkRegistry();

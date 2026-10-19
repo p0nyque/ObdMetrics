@@ -35,7 +35,6 @@ import java.util.concurrent.TimeUnit;
 
 import org.obd.metrics.api.CommandProducer;
 import org.obd.metrics.command.dtc.DtcFollowUpResponse;
-import org.obd.metrics.command.ATCommand;
 import org.obd.metrics.api.model.SnapshotPID;
 import org.obd.metrics.api.EventsPublishlisher;
 import org.obd.metrics.api.VinPids;
@@ -312,11 +311,11 @@ final class DiagnosticTroubleCodeHandler extends ReplyObserver<ObdMetric> implem
 		final Collection<PidDefinition> templates = pidRegistry.findBy(PIDsGroup.DTC_FOLLOW_UP);
 		log.info("Reading DTC snapshots and {} follow-up request(s) per code.", templates.size());
 
-		final Map<String, String> headers = new HashMap<>();
+		final Map<String, Init.Header> headers = new HashMap<>();
 		final Set<String> obdModules = new HashSet<>();
 		if (scheduleCommand.getHeaders() != null) {
 			scheduleCommand.getHeaders().forEach(h -> {
-				headers.put(h.getMode(), h.getHeader());
+				headers.put(h.getMode(), h);
 				if (h.getDtcProtocol() == Init.DtcProtocol.OBD) {
 					obdModules.add(h.getMode());
 				}
@@ -342,10 +341,12 @@ final class DiagnosticTroubleCodeHandler extends ReplyObserver<ObdMetric> implem
 		commandBuffer.clear();
 		commandProducer.pause();
 
+		final boolean clearExtendedAddressing = commandProducer.isExtendedAddressingInUse()
+				|| headers.values().stream().anyMatch(Init.Header::isExtendedAddressing);
 		byModule.forEach((module, codes) -> {
-			final String header = headers.get(module);
-			if (header != null && header.length() > 0) {
-				commandBuffer.addLast(new ATCommand("SH" + header));
+			final Init.Header header = headers.get(module);
+			if (header != null && header.getHeader() != null && header.getHeader().length() > 0) {
+				header.commands(clearExtendedAddressing).forEach(commandBuffer::addLast);
 			}
 
 			for (final DiagnosticTroubleCode dtc : codes) {

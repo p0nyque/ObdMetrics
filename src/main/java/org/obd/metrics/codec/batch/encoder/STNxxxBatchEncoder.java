@@ -52,7 +52,10 @@ final class STNxxxBatchEncoder extends AdjustableBatchSizeEncoder {
 		final StringBuffer query = new StringBuffer();
 		query.append("STPX ");
 
-		init.getHeaders().stream().filter(p -> p.getMode().equals(extractKey(getGroupKey(commands.get(0))))).findFirst()
+		// STPX H: sets the CAN id only, not the extended address: a module behind one (BMW 6F1 + CEA) keeps the
+		// header the multiplexer set up with ATSH / ATCEA instead.
+		init.getHeaders().stream().filter(p -> p.getMode().equals(extractKey(getGroupKey(commands.get(0)))))
+				.filter(h -> !h.isExtendedAddressing()).findFirst()
 				.ifPresent(h -> {
 					query.append("H:");
 					query.append(h.getHeader());

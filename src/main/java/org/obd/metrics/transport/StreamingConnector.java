@@ -28,6 +28,8 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 final class StreamingConnector extends AbstractConnector {
 
+	private final ExtendedAddressing extendedAddressing = new ExtendedAddressing();
+
 	StreamingConnector(final AdapterConnection connection, final Adjustments adjustments) throws IOException {
 		super(BufferSize.DEFAULT, connection, adjustments);
 	}
@@ -42,6 +44,7 @@ final class StreamingConnector extends AbstractConnector {
 				if (adjustments != null && adjustments.isDebugEnabled()) {
 					log.info("TX: {}", command.getQuery());
 				}
+				extendedAddressing.onTransmit(command.getQuery());
 				if (out != null) {
 					out.write(command.getData());
 				}
@@ -81,6 +84,10 @@ final class StreamingConnector extends AbstractConnector {
 					if (cnt >= 12 && buffer[0] == 'S' && buffer[1] == 'E' && buffer[2] == 'A' && buffer[3] == 'R') {
 						start = 12;
 						cnt = (short) (cnt - start);
+					}
+
+					if (extendedAddressing.isActive()) {
+						cnt = (short) ExtendedAddressing.strip(buffer, start, cnt);
 					}
 
 					final ConnectorResponse response = connectorResponsefactory.wrap(buffer, start, start + cnt);

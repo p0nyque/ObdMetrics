@@ -80,9 +80,16 @@ public final class CommandProducer extends LifecycleAdapter implements Callable<
 		messageHeaderMultiplexer.reset();
 	}
 
-	// The ATSH a command queued straight into the buffer needs, from the init's header table; null when it has none.
-	ATCommand headerFor(final Command command) {
+	// The header commands (ATSH, plus extended addressing when the module needs it) a command queued straight into
+	// the buffer needs, from the init's header table; empty when it has none.
+	List<ATCommand> headerFor(final Command command) {
 		return messageHeaderMultiplexer.headerFor(command);
+	}
+
+	// True when the header table uses CAN extended addressing: a normal header queued straight into the buffer must
+	// then switch it off first (Init.Header#commands(true)), since the adapter may still be set up for it.
+	public boolean isExtendedAddressingInUse() {
+		return messageHeaderMultiplexer.isExtendedAddressingInUse();
 	}
 
 	void updateSettings(Adjustments adjustments, Supplier<List<ObdCommand>> commandsSuplier, Diagnostics dianostics,

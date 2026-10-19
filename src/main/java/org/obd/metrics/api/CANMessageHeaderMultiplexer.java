@@ -16,6 +16,7 @@
  */
 package org.obd.metrics.api;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -35,7 +36,14 @@ final class CANMessageHeaderMultiplexer {
 
 	private static final String AT_COMMAND = "AT";
 
-	private final Map<String, ATCommand> canHeaders = new HashMap<>();
+	private final Map<String, Init.Header> canHeaders = new HashMap<>();
+
+	// Whether any header of the table uses CAN extended addressing: only then can the adapter be left set up for
+	// it, and a normal header has to switch it off first.
+	private final boolean extendedAddressingInUse;
+
+	// What this multiplexer last set the adapter to; null = unknown (after reset(), or before the first header).
+	private volatile Boolean extendedAddressingActive;
 
 	private final AtomicBoolean singleModeTest = new AtomicBoolean(false);
 	private final AtomicBoolean addedSingleModeHeaderTest = new AtomicBoolean(false);
@@ -51,10 +59,12 @@ final class CANMessageHeaderMultiplexer {
 
 		init.getHeaders().forEach(h -> {
 			if (h.getMode() != null && h.getHeader() != null) {
-				log.info("Found CAN header={} for mode={}", h.getHeader(), h.getMode());
-				canHeaders.put(h.getMode(), new ATCommand("SH" + h.getHeader()));
+				log.info("Found CAN header={} for mode={}, extended address={}", h.getHeader(), h.getMode(),
+						h.getExtendedAddress());
+				canHeaders.put(h.getMode(), h);
 			}
 		});
+		this.extendedAddressingInUse = canHeaders.values().stream().anyMatch(Init.Header::isExtendedAddressing);
 	}
 
 	<T extends Command> void testSingleMode(List<T> commands) {
@@ -87,14 +97,21 @@ final class CANMessageHeaderMultiplexer {
 		}
 	}
 
-	// The ATSH that points the adapter at the command's module, or null when the init table has no header for it.
-	// Unlike switchHeader it never skips: for commands queued straight into the buffer, whose header is not tracked.
-	ATCommand headerFor(final Command command) {
+	// The AT commands (ATSH, plus the extended addressing set-up when the module needs it) that point the adapter at
+	// the command's module; empty when the init table has no header for it. Unlike switchHeader it never skips:
+	// for commands queued straight into the buffer, whose header is not tracked. With extended addressing in the
+	// table a normal header always clears it, since the adapter's state is unknown there.
+	List<ATCommand> headerFor(final Command command) {
 		String mode = command.getCanMode();
 		if (mode == null || mode.isEmpty()) {
 			mode = command.getMode();
 		}
-		return mode == null ? null : canHeaders.get(mode);
+		final Init.Header header = mode == null ? null : canHeaders.get(mode);
+		return header == null ? Collections.emptyList() : header.commands(extendedAddressingInUse);
+	}
+
+	boolean isExtendedAddressingInUse() {
+		return extendedAddressingInUse;
 	}
 
 	// Forgets the header it last set. Commands queued straight into the buffer (DTC actions, routines, module
@@ -103,6 +120,7 @@ final class CANMessageHeaderMultiplexer {
 	void reset() {
 		currentMode = null;
 		currentNetwork = null;
+		extendedAddressingActive = null;
 		addedSingleModeHeaderTest.set(false);
 	}
 
@@ -133,23 +151,30 @@ final class CANMessageHeaderMultiplexer {
 			currentMode = nextMode;
 			currentNetwork = nextNetwork;
 
-			final ATCommand nextHeaderCommand = canHeaders.get(nextMode);
+			final Init.Header nextHeader = canHeaders.get(nextMode);
 
-			if (nextHeaderCommand != null) {
+			if (nextHeader != null) {
 				if (log.isTraceEnabled()) {
-					log.trace("Setting CAN message header={} for the mode={}", nextHeaderCommand.getQuery(), nextMode);
+					log.trace("Setting CAN message header={} for the mode={}", nextHeader.getHeader(), nextMode);
 				}
 
 				if (isSingleMode) {
 					if (addedSingleModeHeaderTest.compareAndSet(false, true)) {
-						log.info("Injecting CAN message header={} for the mode to={}", nextHeaderCommand.getQuery(),
+						log.info("Injecting CAN message header={} for the mode to={}", nextHeader.getHeader(),
 								nextMode);
-						commandsBuffer.addLast(nextHeaderCommand);
+						queue(nextHeader);
 					}
 				} else {
-					commandsBuffer.addLast(nextHeaderCommand);
+					queue(nextHeader);
 				}
 			}
 		}
+	}
+
+	private void queue(final Init.Header header) {
+		// Clear only when the adapter may still be set up for extended addressing: unknown (null) or known to be on.
+		final boolean clear = extendedAddressingInUse && !Boolean.FALSE.equals(extendedAddressingActive);
+		header.commands(clear).forEach(commandsBuffer::addLast);
+		extendedAddressingActive = header.isExtendedAddressing();
 	}
 }
