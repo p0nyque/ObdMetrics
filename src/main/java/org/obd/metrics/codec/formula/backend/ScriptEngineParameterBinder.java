@@ -40,7 +40,10 @@ final class ScriptEngineParameterBinder {
 
 		@Override
 		public void processUnsigned(final int j, final int dec) {
-			bindings.put(BINDING_FORMULA_PARAMS.get(j), dec);
+			// Letters stop at Z: bytes past the 26th have no name, and a reply may be longer (BMW 22 D08C: 28 bytes).
+			if (j < BINDING_FORMULA_PARAMS.size()) {
+				bindings.put(BINDING_FORMULA_PARAMS.get(j), dec);
+			}
 		}
 
 		@Override
