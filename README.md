@@ -1,8 +1,88 @@
-# OBD Metrics
+# OBD Metrics: BMW F/G fork
 
-![CI](https://github.com/tzebrowski/ObdMetrics/workflows/Deploy/badge.svg?branch=main) 
-![codecov](https://codecov.io/gh/tzebrowski/ObdMetrics/branch/main/graph/badge.svg)
-![Maven Central](https://maven-badges.herokuapp.com/maven-central/io.github.tzebrowski/obd-metrics/badge.svg)
+A fork of [tzebrowski/ObdMetrics](https://github.com/tzebrowski/ObdMetrics), the Java OBD-II / UDS library behind
+ObdGraphs. It adds what a BMW F/G-series car needs to be read over an ELM327-type adapter, and is the library of
+[G-Series Indicators](https://github.com/p0nyque/g-series-indicators), an Android Auto dashboard for the BMW G31 520d MHEV.
+
+Work happens on the default branch, `feat/bmw-extended-addressing`. `v11.x` tracks upstream.
+
+## What this fork adds
+
+| Change | Why | Where |
+|---|---|---|
+| **CAN extended addressing** | BMW modules sit behind the gateway at CAN id `6F1`, with the module's address as the first data byte (`12` DDE, `18` EGS, `02` 48 V battery). Upstream only sent `ATSH<header>`, so no BMW module could be queried. | `Init.Header`, `CANMessageHeaderMultiplexer`, `transport/ExtendedAddressing` |
+| **Reply bytes past `Z` are ignored in formulas** | A reply with more than 26 data bytes (BMW 48 V battery record `22 D08C`: 28) threw in the parameter binder and the PID decoded `null`. | `ScriptEngineParameterBinder` |
+
+Both are unit-tested (`ExtendedAddressingTest`, `InitHeaderCommandsTest`, `ExtendedAddressingStripTest`,
+`LongReplyFormulaTest`) and **not yet tried on a car**.
+
+### CAN extended addressing
+
+Give a header an `extendedAddress`, and optionally the `receiveAddress` the module answers on:
+
+```java
+final Init init = Init.builder()
+        .header(Header.builder().mode("01").header("7E0").build())
+        .header(Header.builder().mode("22").header("6F1").extendedAddress("12").receiveAddress("612").build())
+        .header(Header.builder().mode("EGS").header("6F1").extendedAddress("18").receiveAddress("618").build())
+        .protocol(Protocol.CAN_11)
+        .build();
+```
+
+PIDs pick a header as before: by their `mode`, or with `"overrides": {"canMode": "EGS"}`.
+
+Switching to an extended header sends `ATSH6F1`, `ATCEA12`, `ATCRA612`, `ATFCSH6F1`, `ATFCSD12300000`, `ATFCSM1`.
+Switching back to a normal header first sends `ATCEA`, `ATCRA`, `ATFCSM0`, but only when the table has an extended
+entry, so tables without one behave exactly as upstream. While `ATCEA<hh>` is on, `StreamingConnector` strips the
+tester address `F1` from replies, also after a shown PCI byte or each `N:` of a multi-frame reply.
+
+Rules for code in this repo:
+- Anything that sets a header must use `Init.Header.commands()`, never `new ATCommand("SH" + ...)`, or the adapter stays
+  on the previous module's extended address.
+- BMW modules share `6F1`, so anything keyed by header alone must include the extended address.
+- STN batches (`STPX H:`) leave the header out for extended entries and rely on the `ATSH` / `ATCEA` already sent. Not
+  tested on an STN chip; G-Series Indicators turns STN mode off for the BMW profile.
+
+App-side spec: [bmw-extended-addressing.md](https://github.com/p0nyque/g-series-indicators/blob/main/doc/specs/bmw-extended-addressing.md).
+
+## Build and install
+
+JDK 11 and Maven. On JDK 17+ the delombok plugin fails and formula tests fail for lack of a Nashorn engine.
+
+```bash
+JAVA_HOME=/path/to/jdk-11 mvn install -Dlombok.delombok.skip=true
+```
+
+This installs `io.github.tzebrowski:obd-metrics:11.26.1-SNAPSHOT` into `~/.m2`. The coordinates are upstream's on
+purpose, so the app needs no change; it lists `mavenLocal()` first. Without the local install Gradle silently pulls
+upstream's published snapshot, which has no BMW support.
+
+Test helpers such as `SimpleLifecycle` live in the separate [ObdMetricsTest](https://github.com/tzebrowski/ObdMetricsTest)
+repository.
+
+## Staying in sync with upstream
+
+```bash
+git fetch upstream
+```
+
+```bash
+git merge upstream/v11.x
+```
+
+Run on `feat/bmw-extended-addressing`. Upstream does not know about these changes, so conflicts are resolved here.
+GitHub Actions are off: upstream's workflows need its secrets and publishing setup.
+
+## Licence
+
+Apache License 2.0, see [LICENSE](LICENSE). Original work by Tomasz Żebrowski.
+
+---
+
+# Library documentation
+
+The rest of this file is upstream's documentation and applies to the fork unchanged.
+
 
 ## About
 
